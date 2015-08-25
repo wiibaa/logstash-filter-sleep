@@ -9,7 +9,7 @@ require "logstash/namespace"
 class LogStash::Filters::Sleep < LogStash::Filters::Base
   config_name "sleep"
 
-  # The length of time to sleep, in seconds, for every event.
+  # The length of time to sleep, in seconds, for `every` event.
   #
   # This can be a number (eg, 0.5), or a string (eg, `%{foo}`)
   # The second form (string with a field value) is useful if
@@ -24,7 +24,7 @@ class LogStash::Filters::Sleep < LogStash::Filters::Base
   #         time => "1"
   #       }
   #     }
-  config :time, :validate => :string
+  config :time, :validate => :string, :default => 1
 
   # Sleep on every N'th. This option is ignored in replay mode.
   #
@@ -32,11 +32,11 @@ class LogStash::Filters::Sleep < LogStash::Filters::Base
   # [source,ruby]
   #     filter {
   #       sleep {
-  #         time => "1"   # Sleep 1 second
+  #         time => 1   # Sleep 1 second
   #         every => 10   # on every 10th event
   #       }
   #     }
-  config :every, :validate => :string, :default => 1
+  config :every, :validate => :number, :default => 1
 
   # Enable replay mode.
   #
@@ -66,13 +66,6 @@ class LogStash::Filters::Sleep < LogStash::Filters::Base
 
   public
   def register
-    if @replay && @time.nil?
-      # Default time multiplier is 1 when replay is set.
-      @time = 1
-    end
-    if @time.nil?
-      raise ArgumentError, "Missing required parameter 'time' for input/eventlog"
-    end
     @count = 0
   end # def register
 
@@ -82,12 +75,20 @@ class LogStash::Filters::Sleep < LogStash::Filters::Base
     @count += 1
 
     case @time
-      when Fixnum, Float; time = @time
-      when nil; # nothing
-      else; time = event.sprintf(@time).to_f
+      when Fixnum, Float
+        time = @time
+      when String
+        field = event.sprintf(@time);
+        if field.respond_to? :to_f
+          time = field.to_f
+        else
+          @logger.debug? && @logger.debug("Could not read time value from event field", :field => field)
+        end
     end
-
-    if @replay
+    if time == 0
+      #Avoid divide by 0 error in replay mode
+      @logger.debug? && @logger.debug("Not sleeping as time == 0")
+    elsif @replay
       clock = event.timestamp.to_f
       if @last_clock
         delay = clock - @last_clock
